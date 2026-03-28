@@ -83,15 +83,28 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		corr.AddSource(src.Name, ch)
 	}
 
-	writer := output.NewHuman(os.Stdout, cfg, quiet, verbose)
-	writer.Header(len(sources))
+	outputFmt, _ := rootCmd.PersistentFlags().GetString("output")
 
-	results := corr.Run(ctx)
-	for result := range results {
-		writer.Write(result)
+	type writer interface {
+		Header(sourceCount int)
+		Write(r correlator.Result)
+		Footer()
 	}
 
-	writer.Footer()
+	var w writer
+	switch outputFmt {
+	case "json":
+		w = output.NewJSON(os.Stdout)
+	default:
+		w = output.NewHuman(os.Stdout, cfg, quiet, verbose, Version)
+	}
+
+	w.Header(len(sources))
+	results := corr.Run(ctx)
+	for result := range results {
+		w.Write(result)
+	}
+	w.Footer()
 	return nil
 }
 

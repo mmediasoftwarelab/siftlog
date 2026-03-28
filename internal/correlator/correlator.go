@@ -16,6 +16,10 @@ type Result struct {
 	SignalType   string // "anomaly", "cascade", "silence"
 	CascadeFrom  string // set when this event's service is failing due to another
 	NewCascade   bool   // true only on first detection of this cascade relationship
+
+	// SilenceSignals carries any services detected as unexpectedly quiet
+	// at the time this event was processed. Unrelated to the event itself.
+	SilenceSignals []SilenceSignal
 }
 
 // Correlator merges N event streams in timestamp order and feeds them
@@ -70,13 +74,18 @@ func (c *Correlator) merge(ctx context.Context, out chan<- Result) {
 	}
 
 	// Signal detectors.
+	baselineWindow := time.Duration(c.cfg.Signal.BaselineWindowMinutes) * time.Minute
 	baseline := newBaselineTracker(
-		time.Duration(c.cfg.Signal.BaselineWindowMinutes)*time.Minute,
+		baselineWindow,
 		c.cfg.Signal.AnomalyThresholdMultiplier,
 	)
 	cascade := newCascadeTracker(
 		time.Duration(c.cfg.Correlation.WindowMs) * time.Millisecond,
 	)
+	var silence *silenceTracker
+	if c.cfg.Signal.SilenceDetection {
+		silence = newSilenceTracker(baselineWindow, c.cfg.Signal.SilenceThresholdPct, time.Now())
+	}
 
 	for h.Len() > 0 {
 		select {
@@ -96,6 +105,14 @@ func (c *Correlator) merge(ctx context.Context, out chan<- Result) {
 
 		result := Result{Event: ev}
 
+		// Silence tracker observes every event regardless of severity.
+		if silence != nil {
+			silence.Record(ev.Service, ev.Timestamp)
+			if signals := silence.Check(ev.Timestamp); len(signals) > 0 {
+				result.SilenceSignals = signals
+			}
+		}
+
 		if ev.Severity >= adapter.SeverityError {
 			// Anomaly rate detection.
 			if isAnomaly, _ := baseline.record(ev.Service, ev.Timestamp); isAnomaly {
@@ -113,8 +130,8 @@ func (c *Correlator) merge(ctx context.Context, out chan<- Result) {
 				}
 			}
 		} else {
-			// Still pass non-error events through the cascade tracker
-			// so it can expire stale bursts correctly.
+			// Pass non-error events through cascade tracker so it can
+			// expire stale bursts correctly.
 			cascade.record(ev)
 		}
 

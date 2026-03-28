@@ -30,21 +30,21 @@ type HumanWriter struct {
 	cfg          *config.Config
 	quiet        bool
 	verbose      bool
+	version      string
 	start        time.Time
 	eventCount   int
 	signalCount  int
 	noiseCount   int
-	// cascadeChain tracks the current cascade sequence for display.
-	// Each entry is a service name in propagation order.
 	cascadeChain []string
 }
 
-func NewHuman(w io.Writer, cfg *config.Config, quiet, verbose bool) *HumanWriter {
+func NewHuman(w io.Writer, cfg *config.Config, quiet, verbose bool, version string) *HumanWriter {
 	return &HumanWriter{
 		w:       w,
 		cfg:     cfg,
 		quiet:   quiet,
 		verbose: verbose,
+		version: version,
 		start:   time.Now(),
 	}
 }
@@ -52,7 +52,7 @@ func NewHuman(w io.Writer, cfg *config.Config, quiet, verbose bool) *HumanWriter
 // Header prints the session header.
 func (h *HumanWriter) Header(sourceCount int) {
 	fmt.Fprintln(h.w)
-	colorBold.Fprintf(h.w, "SIFTLOG v0.0.1")
+	colorBold.Fprintf(h.w, "SIFTLOG v%s", h.version)
 	fmt.Fprintf(h.w, "  |  sources: %d  |  window: %dms  |  anchor: %s\n",
 		sourceCount,
 		h.cfg.Correlation.WindowMs,
@@ -85,6 +85,12 @@ func (h *HumanWriter) Write(r correlator.Result) {
 
 	if ev.DriftWarning != "" {
 		colorMuted.Fprintf(h.w, "  [drift warning] %s\n", ev.DriftWarning)
+	}
+
+	for _, sig := range r.SilenceSignals {
+		h.signalCount++
+		colorSignal.Fprintf(h.w, "[signal:silence] %s went quiet — volume dropped %.0f%% from baseline (%.1f → %.1f events/min)\n",
+			sig.Service, sig.DropPct, sig.BaselineRate, sig.CurrentRate)
 	}
 }
 
