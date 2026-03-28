@@ -11,10 +11,11 @@ import (
 
 // Result is a correlated event, annotated with signal information.
 type Result struct {
-	Event      adapter.Event
-	IsSignal   bool
-	SignalType  string // "anomaly", "cascade", "silence"
-	CascadeFrom string // source service, if cascade detected
+	Event        adapter.Event
+	IsSignal     bool
+	SignalType   string // "anomaly", "cascade", "silence"
+	CascadeFrom  string // set when this event's service is failing due to another
+	NewCascade   bool   // true only on first detection of this cascade relationship
 }
 
 // Correlator merges N event streams in timestamp order and feeds them
@@ -68,10 +69,13 @@ func (c *Correlator) merge(ctx context.Context, out chan<- Result) {
 		}
 	}
 
-	// Baseline tracker for anomaly detection.
+	// Signal detectors.
 	baseline := newBaselineTracker(
 		time.Duration(c.cfg.Signal.BaselineWindowMinutes)*time.Minute,
 		c.cfg.Signal.AnomalyThresholdMultiplier,
+	)
+	cascade := newCascadeTracker(
+		time.Duration(c.cfg.Correlation.WindowMs) * time.Millisecond,
 	)
 
 	for h.Len() > 0 {
@@ -90,15 +94,28 @@ func (c *Correlator) merge(ctx context.Context, out chan<- Result) {
 			heap.Push(h, heapItem{event: next, srcIdx: srcIdx})
 		}
 
-		// Signal detection.
 		result := Result{Event: ev}
+
 		if ev.Severity >= adapter.SeverityError {
-			isAnomaly, rate := baseline.record(ev.Service, ev.Timestamp)
-			if isAnomaly {
+			// Anomaly rate detection.
+			if isAnomaly, _ := baseline.record(ev.Service, ev.Timestamp); isAnomaly {
 				result.IsSignal = true
 				result.SignalType = "anomaly"
-				_ = rate
 			}
+
+			// Cascade detection.
+			if c.cfg.Signal.CascadeDetection {
+				if cr := cascade.record(ev); cr.CascadeFrom != "" {
+					result.IsSignal = true
+					result.SignalType = "cascade"
+					result.CascadeFrom = cr.CascadeFrom
+					result.NewCascade = cr.IsNew
+				}
+			}
+		} else {
+			// Still pass non-error events through the cascade tracker
+			// so it can expire stale bursts correctly.
+			cascade.record(ev)
 		}
 
 		select {

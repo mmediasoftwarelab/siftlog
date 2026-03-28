@@ -26,14 +26,17 @@ const separator = "━━━━━━━━━━━━━━━━━━━━�
 
 // HumanWriter writes human-readable output to w.
 type HumanWriter struct {
-	w          io.Writer
-	cfg        *config.Config
-	quiet      bool
-	verbose    bool
-	start      time.Time
-	eventCount int
-	signalCount int
-	noiseCount  int
+	w            io.Writer
+	cfg          *config.Config
+	quiet        bool
+	verbose      bool
+	start        time.Time
+	eventCount   int
+	signalCount  int
+	noiseCount   int
+	// cascadeChain tracks the current cascade sequence for display.
+	// Each entry is a service name in propagation order.
+	cascadeChain []string
 }
 
 func NewHuman(w io.Writer, cfg *config.Config, quiet, verbose bool) *HumanWriter {
@@ -64,16 +67,16 @@ func (h *HumanWriter) Write(r correlator.Result) {
 
 	if r.IsSignal {
 		h.signalCount++
-		colorSignal.Fprintf(h.w, "[signal:%s] ", r.SignalType)
-		if r.CascadeFrom != "" {
-			fmt.Fprintf(h.w, "Cascade from %s\n", r.CascadeFrom)
+
+		if r.SignalType == "cascade" {
+			h.updateCascadeChain(r)
 		} else {
-			fmt.Fprintln(h.w)
+			colorSignal.Fprintf(h.w, "[signal:%s]\n", r.SignalType)
 		}
 	} else {
 		h.noiseCount++
 		if h.quiet {
-			return // suppress non-signal in quiet mode
+			return
 		}
 	}
 
@@ -82,6 +85,28 @@ func (h *HumanWriter) Write(r correlator.Result) {
 
 	if ev.DriftWarning != "" {
 		colorMuted.Fprintf(h.w, "  [drift warning] %s\n", ev.DriftWarning)
+	}
+}
+
+// updateCascadeChain maintains and prints the cascade chain header.
+// On the first detection of a new cascade link, it prints the updated chain.
+// Subsequent events from the same cascade are printed without a header.
+func (h *HumanWriter) updateCascadeChain(r correlator.Result) {
+	svc := r.Event.Service
+	from := r.CascadeFrom
+
+	if r.NewCascade {
+		// Extend or start the chain.
+		if len(h.cascadeChain) == 0 {
+			h.cascadeChain = []string{from, svc}
+		} else if h.cascadeChain[len(h.cascadeChain)-1] == from {
+			// Extending an existing chain.
+			h.cascadeChain = append(h.cascadeChain, svc)
+		} else {
+			// New cascade, different origin — start fresh.
+			h.cascadeChain = []string{from, svc}
+		}
+		colorSignal.Fprintf(h.w, "[signal:cascade] %s\n", strings.Join(h.cascadeChain, " → "))
 	}
 }
 
