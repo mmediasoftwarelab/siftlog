@@ -1,0 +1,12 @@
+{"timestamp":"2024-01-15T14:22:01.100Z","level":"info","service":"payment-service","message":"Processing payment request","trace_id":"a3f9c2","amount":99.99}
+{"timestamp":"2024-01-15T14:22:01.200Z","level":"info","service":"order-service","message":"Order created, awaiting payment","trace_id":"a3f9c2","order_id":"ord-881"}
+{"timestamp":"2024-01-15T14:22:02.300Z","level":"debug","service":"payment-service","message":"Acquiring connection from pool","pool_size":20,"waiting":0}
+{"timestamp":"2024-01-15T14:22:03.000Z","level":"warn","service":"payment-service","message":"Connection pool under pressure","pool_size":20,"waiting":12}
+{"timestamp":"2024-01-15T14:22:03.441Z","level":"error","service":"payment-service","message":"connection pool exhausted","pool_size":20,"waiting":47}
+{"timestamp":"2024-01-15T14:22:03.512Z","level":"error","service":"payment-service","message":"request timeout after 5000ms","trace_id":"a3f9c2"}
+{"timestamp":"2024-01-15T14:22:03.891Z","level":"error","service":"order-service","message":"upstream payment-service unavailable","trace_id":"a3f9c2"}
+{"timestamp":"2024-01-15T14:22:04.102Z","level":"warn","service":"order-service","message":"retry 1/3 to payment-service","trace_id":"a3f9c2"}
+{"timestamp":"2024-01-15T14:22:04.608Z","level":"error","service":"order-service","message":"retry 2/3 failed","trace_id":"a3f9c2"}
+{"timestamp":"2024-01-15T14:22:05.112Z","level":"error","service":"order-service","message":"retry 3/3 failed — marking payment-service degraded","trace_id":"a3f9c2"}
+{"timestamp":"2024-01-15T14:22:05.201Z","level":"error","service":"notification-svc","message":"order status webhook failed: order-service 503"}
+{"timestamp":"2024-01-15T14:22:05.310Z","level":"warn","service":"notification-svc","message":"queue depth: 847","threshold":100}

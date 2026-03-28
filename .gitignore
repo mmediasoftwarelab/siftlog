@@ -1,0 +1,32 @@
+# Build output
+siftlog
+siftlog.exe
+*.exe
+
+# Test cache and coverage
+*.test
+*.out
+coverage.html
+
+# Config with potential secrets
+siftlog.yaml
+!siftlog.example.yaml
+
+# Session files
+.siftlog/
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# IDE / editor
+.vscode/settings.json
+*.code-workspace
+
+# Claude Code local settings
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
