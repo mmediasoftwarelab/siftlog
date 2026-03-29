@@ -150,6 +150,36 @@ func TestDatadogAPIError(t *testing.T) {
 	}
 }
 
+func TestDatadogTraceIDVariants(t *testing.T) {
+	ts := time.Now()
+	for _, tc := range []struct {
+		key     string
+		traceID string
+	}{
+		{"dd.trace_id", "span-001"},
+		{"traceId", "span-002"},
+	} {
+		attrs := map[string]any{tc.key: tc.traceID}
+		entry := logEntry{Attributes: logAttributes{
+			Timestamp:  ts,
+			Status:     "info",
+			Message:    "test",
+			Service:    "svc",
+			Attributes: attrs,
+		}}
+		mock := &mockLogsAPI{pages: []searchResponse{{Data: []logEntry{entry}}}}
+		a := newWithClient(config.SourceConfig{Name: "test-dd"}, mock)
+		ch, _ := a.Fetch(context.Background(), ts.Add(-time.Minute), ts.Add(time.Minute))
+		var events []adapter.Event
+		for ev := range ch {
+			events = append(events, ev)
+		}
+		if len(events) != 1 || events[0].TraceID != tc.traceID {
+			t.Errorf("key %q: want traceID %q, got %q", tc.key, tc.traceID, events[0].TraceID)
+		}
+	}
+}
+
 func TestDatadogParseSeverity(t *testing.T) {
 	tests := []struct {
 		status string

@@ -237,6 +237,14 @@ func TestExtractService(t *testing.T) {
 			want: "notification-svc",
 		},
 		{
+			name: "module_id from app engine",
+			entry: logEntry{
+				Labels:   map[string]string{},
+				Resource: resourceInfo{Labels: map[string]string{"module_id": "frontend"}},
+			},
+			want: "frontend",
+		},
+		{
 			name: "log name fallback",
 			entry: logEntry{
 				LogName:  "projects/p/logs/auth-service",
@@ -244,6 +252,15 @@ func TestExtractService(t *testing.T) {
 				Resource: resourceInfo{Labels: map[string]string{}},
 			},
 			want: "auth-service",
+		},
+		{
+			name: "log name with URL-encoded separator",
+			entry: logEntry{
+				LogName:  "projects/p/logs/requests%2Fhttp",
+				Labels:   map[string]string{},
+				Resource: resourceInfo{Labels: map[string]string{}},
+			},
+			want: "requests/http",
 		},
 	}
 	for _, tc := range tests {
@@ -271,12 +288,89 @@ func TestParseSeverity(t *testing.T) {
 		{"DEFAULT", adapter.SeverityInfo},
 		{"DEBUG", adapter.SeverityDebug},
 		{"", adapter.SeverityInfo},
+		{"error", adapter.SeverityError},   // lowercase - parseSeverity uses strings.ToUpper
+		{"warning", adapter.SeverityWarn},
 	}
 	for _, tc := range tests {
 		got := parseSeverity(tc.s)
 		if got != tc.want {
 			t.Errorf("parseSeverity(%q): want %v, got %v", tc.s, tc.want, got)
 		}
+	}
+}
+
+func TestGoogleCloudJSONPayloadMsgKeys(t *testing.T) {
+	ts := time.Now()
+	for _, tc := range []struct {
+		key  string
+		want string
+	}{
+		{"message", "from message key"},
+		{"msg", "from msg key"},
+		{"log", "from log key"},
+	} {
+		mock := &mockLoggingAPI{
+			pages: []listResponse{
+				{Entries: []logEntry{makeJSONEntry(ts, "projects/p/logs/svc", "INFO", map[string]any{tc.key: tc.want})}},
+			},
+		}
+		a := newWithClient(config.SourceConfig{Name: "test-gcl", Project: "p"}, mock)
+		ch, _ := a.Fetch(context.Background(), ts.Add(-time.Minute), ts.Add(time.Minute))
+		var events []adapter.Event
+		for ev := range ch {
+			events = append(events, ev)
+		}
+		if len(events) != 1 || events[0].Message != tc.want {
+			t.Errorf("key %q: want %q, got %q", tc.key, tc.want, events[0].Message)
+		}
+	}
+}
+
+func TestGoogleCloudJSONPayloadTraceVariants(t *testing.T) {
+	ts := time.Now()
+	for _, tc := range []struct {
+		key     string
+		traceID string
+	}{
+		{"trace_id", "tid-001"},
+		{"traceId", "tid-002"},
+		{"request_id", "rid-003"},
+	} {
+		mock := &mockLoggingAPI{
+			pages: []listResponse{
+				{Entries: []logEntry{makeJSONEntry(ts, "projects/p/logs/svc", "INFO", map[string]any{"message": "x", tc.key: tc.traceID})}},
+			},
+		}
+		a := newWithClient(config.SourceConfig{Name: "test-gcl", Project: "p"}, mock)
+		ch, _ := a.Fetch(context.Background(), ts.Add(-time.Minute), ts.Add(time.Minute))
+		var events []adapter.Event
+		for ev := range ch {
+			events = append(events, ev)
+		}
+		if len(events) != 1 || events[0].TraceID != tc.traceID {
+			t.Errorf("key %q: want traceID %q, got %q", tc.key, tc.traceID, events[0].TraceID)
+		}
+	}
+}
+
+func TestGoogleCloudJSONPayloadTraceWinsOverTopLevel(t *testing.T) {
+	ts := time.Now()
+	entry := makeJSONEntry(ts, "projects/p/logs/svc", "INFO", map[string]any{
+		"message":  "test",
+		"trace_id": "payload-trace",
+	})
+	entry.Trace = "projects/p/traces/toplevel-trace"
+
+	mock := &mockLoggingAPI{pages: []listResponse{{Entries: []logEntry{entry}}}}
+	a := newWithClient(config.SourceConfig{Name: "test-gcl", Project: "p"}, mock)
+	ch, _ := a.Fetch(context.Background(), ts.Add(-time.Minute), ts.Add(time.Minute))
+
+	var events []adapter.Event
+	for ev := range ch {
+		events = append(events, ev)
+	}
+	if len(events) != 1 || events[0].TraceID != "payload-trace" {
+		t.Errorf("want payload-trace, got %q", events[0].TraceID)
 	}
 }
 

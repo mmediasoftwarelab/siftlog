@@ -158,10 +158,37 @@ Flags:
 | Grafana Loki               | Available   |
 | AWS CloudWatch Logs        | Available   |
 | Elasticsearch / OpenSearch | Available   |
-| Datadog Logs               | Planned     |
-| Google Cloud Logging       | Planned     |
+| Datadog Logs               | Available   |
+| Google Cloud Logging       | Available   |
 
 Log formats handled automatically: JSON (structured), plain text with heuristic timestamp and severity extraction. Handles RFC3339, space-separated datetime, Unix epoch (seconds and milliseconds), and common framework variants.
+
+---
+
+## SiftLog Platform
+
+The CLI is open source. The Platform is what happens when your team needs it running all the time.
+
+**siftlogd** is a licensed, self-hosted binary that wraps the SiftLog engine and runs continuously against your production log sources. You deploy it. It never leaves your infrastructure.
+
+```bash
+# siftlogd runs as a daemon - your sources, your data, your network
+siftlogd --config /etc/siftlog/config.yaml
+```
+
+Why self-hosted: the teams that need this most — regulated industries, financial services, enterprise DevOps — can't route production log data through a third-party SaaS. siftlogd is designed for that constraint.
+
+**What siftlogd adds on top of the CLI engine:**
+
+- Persistent baselines that survive restarts
+- Signal history - every detected cascade, anomaly, and silence written to a local store
+- REST API for querying signals and source health
+- Webhook, PagerDuty, and Slack alerting with alert deduplication
+- Web UI for signal timeline, cascade chains, and source health
+- Config hot-reload - add sources without restart
+- License key enforcement - single binary, no Kubernetes required
+
+The Platform is in active development. If you're evaluating it for your team, reach out via **[mmediasoftwarelab.com](https://www.mmediasoftwarelab.com)**.
 
 ---
 
