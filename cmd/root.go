@@ -34,6 +34,8 @@ func init() {
 	rootCmd.PersistentFlags().Bool("quiet", false, "suppress noise, show signal only")
 	rootCmd.PersistentFlags().Bool("verbose", false, "include all events and structured fields")
 	rootCmd.PersistentFlags().String("save", "", "save session to file for replay")
+	rootCmd.PersistentFlags().Bool("live", false, "tail sources and stream events in real time")
+	rootCmd.PersistentFlags().Int64("flush-ms", 0, "live mode: max ms before oldest buffered event is emitted (default 500)")
 
 	viper.BindPFlag("output.format", rootCmd.PersistentFlags().Lookup("output"))
 }

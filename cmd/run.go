@@ -9,7 +9,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mmediasoftwarelab/siftlog/internal/adapter"
+	"github.com/mmediasoftwarelab/siftlog/internal/adapter/cloudwatch"
+	"github.com/mmediasoftwarelab/siftlog/internal/adapter/elasticsearch"
 	"github.com/mmediasoftwarelab/siftlog/internal/adapter/file"
+	"github.com/mmediasoftwarelab/siftlog/internal/adapter/loki"
 	"github.com/mmediasoftwarelab/siftlog/internal/config"
 	"github.com/mmediasoftwarelab/siftlog/internal/correlator"
 	"github.com/mmediasoftwarelab/siftlog/internal/output"
@@ -63,8 +67,31 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		verbose, _ = rootCmd.PersistentFlags().GetBool("verbose")
 	}
 
+	live, _ := cmd.Flags().GetBool("live")
+	if !cmd.Flags().Changed("live") {
+		live, _ = rootCmd.PersistentFlags().GetBool("live")
+	}
+
+	if window, _ := rootCmd.PersistentFlags().GetString("window"); window != "" {
+		if d, err := time.ParseDuration(window); err == nil {
+			cfg.Correlation.WindowMs = d.Milliseconds()
+		}
+	}
+	flushMs, _ := cmd.Flags().GetInt64("flush-ms")
+	if !cmd.Flags().Changed("flush-ms") {
+		flushMs, _ = rootCmd.PersistentFlags().GetInt64("flush-ms")
+	}
+
+	if live {
+		if flushMs > 0 {
+			cfg.Live.FlushMs = flushMs
+		} else if cfg.Live.FlushMs == 0 {
+			cfg.Live.FlushMs = 500
+		}
+	}
+
 	// Build source list: file args > --file flag > config sources.
-	sources := buildSources(cmd, args, cfg)
+	sources := buildSources(cmd, args, cfg, live)
 	if len(sources) == 0 {
 		return fmt.Errorf("no sources configured — provide file arguments, --file flag, or a siftlog.yaml config")
 	}
@@ -75,8 +102,11 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	corr := correlator.New(cfg)
 
 	for _, src := range sources {
-		adapter := file.New(src)
-		ch, err := adapter.Fetch(ctx, since, until)
+		a, err := newAdapter(src)
+		if err != nil {
+			return fmt.Errorf("source %q: %w", src.Name, err)
+		}
+		ch, err := a.Fetch(ctx, since, until)
 		if err != nil {
 			return fmt.Errorf("source %q: %w", src.Name, err)
 		}
@@ -108,7 +138,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func buildSources(cmd *cobra.Command, args []string, cfg *config.Config) []config.SourceConfig {
+func buildSources(cmd *cobra.Command, args []string, cfg *config.Config, live bool) []config.SourceConfig {
 	var paths []string
 
 	// Positional args take priority.
@@ -130,19 +160,28 @@ func buildSources(cmd *cobra.Command, args []string, cfg *config.Config) []confi
 				Name: fmt.Sprintf("source-%d(%s)", i+1, name),
 				Type: "file",
 				Path: p,
+				Tail: live,
 			})
 		}
 		return sources
 	}
 
-	// Fall back to config file sources (file type only for now).
-	var sources []config.SourceConfig
-	for _, s := range cfg.Sources {
-		if s.Type == "file" {
-			sources = append(sources, s)
-		}
+	// Fall back to all config sources.
+	return cfg.Sources
+}
+
+// newAdapter constructs the appropriate adapter for a source config.
+func newAdapter(src config.SourceConfig) (adapter.Adapter, error) {
+	switch src.Type {
+	case "loki":
+		return loki.New(src)
+	case "cloudwatch":
+		return cloudwatch.New(src)
+	case "elasticsearch":
+		return elasticsearch.New(src)
+	default:
+		return file.New(src), nil
 	}
-	return sources
 }
 
 func parseSince(cmd *cobra.Command) (time.Time, error) {

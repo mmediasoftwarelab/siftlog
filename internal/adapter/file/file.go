@@ -31,62 +31,94 @@ func (a *Adapter) Name() string {
 }
 
 func (a *Adapter) Fetch(ctx context.Context, since, until time.Time) (<-chan adapter.Event, error) {
-	var r io.ReadCloser
+	stdin := a.cfg.Path == "" || a.cfg.Path == "-"
 
-	if a.cfg.Path == "" || a.cfg.Path == "-" {
-		r = io.NopCloser(os.Stdin)
+	var f *os.File
+	if stdin {
+		f = os.Stdin
 	} else {
-		f, err := os.Open(a.cfg.Path)
+		var err error
+		f, err = os.Open(a.cfg.Path)
 		if err != nil {
 			return nil, fmt.Errorf("file adapter %q: %w", a.cfg.Name, err)
 		}
-		r = f
+		if a.cfg.Tail && a.cfg.SeekToEnd {
+			if _, err := f.Seek(0, io.SeekEnd); err != nil {
+				f.Close()
+				return nil, fmt.Errorf("file adapter %q: seek: %w", a.cfg.Name, err)
+			}
+		}
 	}
 
 	ch := make(chan adapter.Event, 256)
 
 	go func() {
 		defer close(ch)
-		defer r.Close()
+		if !stdin {
+			defer f.Close()
+		}
 
-		scanner := bufio.NewScanner(r)
+		scanner := bufio.NewScanner(f)
 		scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB line buffer
 
-		for scanner.Scan() {
+		for {
+			for scanner.Scan() {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				line := strings.TrimSpace(scanner.Text())
+				if line == "" {
+					continue
+				}
+
+				event := parseLine(line, a.cfg)
+
+				// Apply per-source timestamp offset.
+				if a.cfg.TimestampOffsetMs != 0 {
+					event.RawTimestamp = event.Timestamp
+					event.Timestamp = event.Timestamp.Add(
+						time.Duration(a.cfg.TimestampOffsetMs) * time.Millisecond,
+					)
+				}
+
+				// Filter by time range if specified.
+				if !since.IsZero() && event.Timestamp.Before(since) {
+					continue
+				}
+				if !until.IsZero() && event.Timestamp.After(until) {
+					continue
+				}
+
+				select {
+				case ch <- event:
+				case <-ctx.Done():
+					return
+				}
+			}
+
+			// EOF reached. In tail mode, wait for more data. Otherwise done.
+			if !a.cfg.Tail {
+				return
+			}
+
 			select {
 			case <-ctx.Done():
 				return
-			default:
+			case <-time.After(100 * time.Millisecond):
 			}
 
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" {
-				continue
+			// Detect truncation: if the file is now smaller than our
+			// current position, seek back to the start.
+			pos, _ := f.Seek(0, io.SeekCurrent)
+			if info, err := f.Stat(); err == nil && info.Size() < pos {
+				f.Seek(0, io.SeekStart)
 			}
 
-			event := parseLine(line, a.cfg)
-
-			// Apply per-source timestamp offset.
-			if a.cfg.TimestampOffsetMs != 0 {
-				event.RawTimestamp = event.Timestamp
-				event.Timestamp = event.Timestamp.Add(
-					time.Duration(a.cfg.TimestampOffsetMs) * time.Millisecond,
-				)
-			}
-
-			// Filter by time range if specified.
-			if !since.IsZero() && event.Timestamp.Before(since) {
-				continue
-			}
-			if !until.IsZero() && event.Timestamp.After(until) {
-				continue
-			}
-
-			select {
-			case ch <- event:
-			case <-ctx.Done():
-				return
-			}
+			scanner = bufio.NewScanner(f)
+			scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 		}
 	}()
 

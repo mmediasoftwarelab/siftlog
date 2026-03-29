@@ -14,6 +14,7 @@ type Config struct {
 	Signal      SignalConfig       `mapstructure:"signal"`
 	Output      OutputConfig       `mapstructure:"output"`
 	Session     SessionConfig      `mapstructure:"session"`
+	Live        LiveConfig         `mapstructure:"live"`
 }
 
 type SourceConfig struct {
@@ -26,6 +27,8 @@ type SourceConfig struct {
 	Auth              AuthConfig        `mapstructure:"auth"`
 	Labels            map[string]string `mapstructure:"labels"`
 	TimestampOffsetMs int64             `mapstructure:"timestamp_offset_ms"`
+	Tail              bool              `mapstructure:"tail"`         // follow file like tail -f (live mode)
+	SeekToEnd         bool              `mapstructure:"seek_to_end"`  // skip existing content on open
 }
 
 type AuthConfig struct {
@@ -60,9 +63,13 @@ type SessionConfig struct {
 	RetentionDays int    `mapstructure:"retention_days"`
 }
 
+type LiveConfig struct {
+	FlushMs int64 `mapstructure:"flush_ms"` // max ms before oldest buffered event is emitted
+}
+
 func defaults() {
 	viper.SetDefault("correlation.anchor", "sender")
-	viper.SetDefault("correlation.window_ms", 500)
+	viper.SetDefault("correlation.window_ms", 5000)
 	viper.SetDefault("correlation.drift_tolerance_ms", 200)
 	viper.SetDefault("signal.anomaly_threshold_multiplier", 10.0)
 	viper.SetDefault("signal.cascade_detection", true)
@@ -75,6 +82,7 @@ func defaults() {
 	viper.SetDefault("output.show_service_name", true)
 	viper.SetDefault("session.save_dir", "~/.siftlog/sessions")
 	viper.SetDefault("session.retention_days", 7)
+	viper.SetDefault("live.flush_ms", 500)
 }
 
 func Load(cfgFile string) (*Config, error) {

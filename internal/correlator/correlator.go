@@ -46,6 +46,10 @@ func (c *Correlator) AddSource(name string, ch <-chan adapter.Event) {
 
 // Run merges all sources and sends correlated Results to the returned channel.
 // The channel is closed when all sources are exhausted or ctx is cancelled.
+//
+// In live mode (cfg.Live.FlushMs > 0) a flush ticker ensures the oldest
+// buffered event is emitted after at most FlushMs milliseconds, preventing
+// a quiet source from stalling output from busy ones.
 func (c *Correlator) Run(ctx context.Context) <-chan Result {
 	out := make(chan Result, 256)
 
@@ -57,70 +61,32 @@ func (c *Correlator) Run(ctx context.Context) <-chan Result {
 	return out
 }
 
-// merge implements a k-way merge using a min-heap.
-// Each heap entry holds the next unprocessed event from one source.
+// merge sets up signal detectors and dispatches to the appropriate merge strategy.
 func (c *Correlator) merge(ctx context.Context, out chan<- Result) {
 	h := &eventHeap{}
 	heap.Init(h)
 
-	// Seed: pull the first event from each source.
-	active := make([]namedSource, 0, len(c.sources))
-	for _, src := range c.sources {
-		src := src
-		if ev, ok := <-src.ch; ok {
-			heap.Push(h, heapItem{event: ev, srcIdx: len(active)})
-			active = append(active, src)
-		}
-	}
-
-	// Signal detectors.
 	baselineWindow := time.Duration(c.cfg.Signal.BaselineWindowMinutes) * time.Minute
-	baseline := newBaselineTracker(
-		baselineWindow,
-		c.cfg.Signal.AnomalyThresholdMultiplier,
-	)
-	cascade := newCascadeTracker(
-		time.Duration(c.cfg.Correlation.WindowMs) * time.Millisecond,
-	)
+	baseline := newBaselineTracker(baselineWindow, c.cfg.Signal.AnomalyThresholdMultiplier)
+	cascade := newCascadeTracker(time.Duration(c.cfg.Correlation.WindowMs) * time.Millisecond)
 	var silence *silenceTracker
 	if c.cfg.Signal.SilenceDetection {
 		silence = newSilenceTracker(baselineWindow, c.cfg.Signal.SilenceThresholdPct, time.Now())
 	}
 
-	for h.Len() > 0 {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		item := heap.Pop(h).(heapItem)
-		ev := item.event
-		srcIdx := item.srcIdx
-
-		// Refill from the same source.
-		if next, ok := <-active[srcIdx].ch; ok {
-			heap.Push(h, heapItem{event: next, srcIdx: srcIdx})
-		}
-
+	emit := func(ev adapter.Event) {
 		result := Result{Event: ev}
-
-		// Silence tracker observes every event regardless of severity.
 		if silence != nil {
 			silence.Record(ev.Service, ev.Timestamp)
 			if signals := silence.Check(ev.Timestamp); len(signals) > 0 {
 				result.SilenceSignals = signals
 			}
 		}
-
 		if ev.Severity >= adapter.SeverityError {
-			// Anomaly rate detection.
 			if isAnomaly, _ := baseline.record(ev.Service, ev.Timestamp); isAnomaly {
 				result.IsSignal = true
 				result.SignalType = "anomaly"
 			}
-
-			// Cascade detection.
 			if c.cfg.Signal.CascadeDetection {
 				if cr := cascade.record(ev); cr.CascadeFrom != "" {
 					result.IsSignal = true
@@ -130,16 +96,107 @@ func (c *Correlator) merge(ctx context.Context, out chan<- Result) {
 				}
 			}
 		} else {
-			// Pass non-error events through cascade tracker so it can
-			// expire stale bursts correctly.
 			cascade.record(ev)
 		}
-
 		select {
 		case out <- result:
 		case <-ctx.Done():
-			return
 		}
+	}
+
+	if c.cfg.Live.FlushMs > 0 {
+		c.mergeLive(ctx, h, emit)
+	} else {
+		c.mergeHistorical(ctx, h, emit)
+	}
+}
+
+// mergeHistorical is the original synchronous k-way merge.
+// Each source is refilled inline after its event is popped.
+func (c *Correlator) mergeHistorical(ctx context.Context, h *eventHeap, emit func(adapter.Event)) {
+	active := make([]namedSource, 0, len(c.sources))
+	for _, src := range c.sources {
+		src := src
+		if ev, ok := <-src.ch; ok {
+			heap.Push(h, heapItem{event: ev, srcIdx: len(active)})
+			active = append(active, src)
+		}
+	}
+
+	for h.Len() > 0 {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		item := heap.Pop(h).(heapItem)
+		if next, ok := <-active[item.srcIdx].ch; ok {
+			heap.Push(h, heapItem{event: next, srcIdx: item.srcIdx})
+		}
+		emit(item.event)
+	}
+}
+
+// mergeLive fans all source channels into a single incoming channel and uses
+// a flush ticker to emit the oldest buffered event when sources are quiet.
+func (c *Correlator) mergeLive(ctx context.Context, h *eventHeap, emit func(adapter.Event)) {
+	type doneMsg struct{ name string }
+	incoming := make(chan adapter.Event, 256)
+	done := make(chan doneMsg, len(c.sources))
+
+	for _, src := range c.sources {
+		src := src
+		go func() {
+			for ev := range src.ch {
+				select {
+				case incoming <- ev:
+				case <-ctx.Done():
+					return
+				}
+			}
+			done <- doneMsg{src.name}
+		}()
+	}
+
+	flushAge := time.Duration(c.cfg.Live.FlushMs) * time.Millisecond
+	ticker := time.NewTicker(flushAge)
+	defer ticker.Stop()
+
+	// flushReady emits all heap events older than flushAge.
+	flushReady := func() {
+		horizon := time.Now().Add(-flushAge)
+		for h.Len() > 0 {
+			top := (*h)[0]
+			if top.event.Timestamp.After(horizon) {
+				break
+			}
+			item := heap.Pop(h).(heapItem)
+			emit(item.event)
+		}
+	}
+
+	remaining := len(c.sources)
+	for remaining > 0 || h.Len() > 0 {
+		select {
+		case <-ctx.Done():
+			return
+
+		case ev := <-incoming:
+			heap.Push(h, heapItem{event: ev})
+			flushReady()
+
+		case <-done:
+			remaining--
+
+		case <-ticker.C:
+			flushReady()
+		}
+	}
+
+	// All sources done — drain any remaining buffered events.
+	for h.Len() > 0 {
+		item := heap.Pop(h).(heapItem)
+		emit(item.event)
 	}
 }
 
