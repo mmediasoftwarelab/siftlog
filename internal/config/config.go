@@ -20,21 +20,24 @@ type Config struct {
 type SourceConfig struct {
 	Name              string            `mapstructure:"name"`
 	Type              string            `mapstructure:"type"`
-	Path              string            `mapstructure:"path"`   // file adapter
-	URL               string            `mapstructure:"url"`    // loki, es
-	Region            string            `mapstructure:"region"` // cloudwatch
+	Path              string            `mapstructure:"path"`    // file adapter
+	URL               string            `mapstructure:"url"`     // loki, es, datadog base URL
+	Region            string            `mapstructure:"region"`  // cloudwatch
+	Project           string            `mapstructure:"project"` // googlecloud
+	Query             string            `mapstructure:"query"`   // datadog, googlecloud filter
 	LogGroups         []string          `mapstructure:"log_groups"`
 	Auth              AuthConfig        `mapstructure:"auth"`
 	Labels            map[string]string `mapstructure:"labels"`
 	TimestampOffsetMs int64             `mapstructure:"timestamp_offset_ms"`
-	Tail              bool              `mapstructure:"tail"`         // follow file like tail -f (live mode)
-	SeekToEnd         bool              `mapstructure:"seek_to_end"`  // skip existing content on open
+	Tail              bool              `mapstructure:"tail"`        // follow file like tail -f (live mode)
+	SeekToEnd         bool              `mapstructure:"seek_to_end"` // skip existing content on open
 }
 
 type AuthConfig struct {
 	Type      string `mapstructure:"type"`
 	TokenEnv  string `mapstructure:"token_env"`
 	APIKey    string `mapstructure:"api_key"`
+	AppKeyEnv string `mapstructure:"app_key_env"` // Datadog application key env var
 }
 
 type CorrelationConfig struct {

@@ -11,8 +11,10 @@ import (
 
 	"github.com/mmediasoftwarelab/siftlog/internal/adapter"
 	"github.com/mmediasoftwarelab/siftlog/internal/adapter/cloudwatch"
+	"github.com/mmediasoftwarelab/siftlog/internal/adapter/datadog"
 	"github.com/mmediasoftwarelab/siftlog/internal/adapter/elasticsearch"
 	"github.com/mmediasoftwarelab/siftlog/internal/adapter/file"
+	"github.com/mmediasoftwarelab/siftlog/internal/adapter/googlecloud"
 	"github.com/mmediasoftwarelab/siftlog/internal/adapter/loki"
 	"github.com/mmediasoftwarelab/siftlog/internal/config"
 	"github.com/mmediasoftwarelab/siftlog/internal/correlator"
@@ -179,6 +181,10 @@ func newAdapter(src config.SourceConfig) (adapter.Adapter, error) {
 		return cloudwatch.New(src)
 	case "elasticsearch":
 		return elasticsearch.New(src)
+	case "datadog":
+		return datadog.New(src)
+	case "googlecloud", "gcp":
+		return googlecloud.New(src)
 	default:
 		return file.New(src), nil
 	}
