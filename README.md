@@ -7,7 +7,7 @@
 When a cascading failure hits your system, the signal is spread across multiple log streams — each with its own timestamp format, clock drift, and noise floor. Existing observability tools show you *that* something is wrong. SiftLog shows you *what* happened and in what order, in your terminal, in seconds.
 
 ```
-SIFTLOG v0.0.1  |  sources: 2  |  window: 500ms  |  anchor: sender
+SIFTLOG v0.2.0  |  sources: 2  |  window: 5000ms  |  anchor: sender
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 [signal:cascade] payment-service → order-service → notification-service
 
@@ -58,6 +58,12 @@ siftlog --output json --quiet app.log | jq '.events[] | select(.severity == "err
 
 # Read from stdin
 kubectl logs -l app=payment-service --since=15m | siftlog -
+
+# Tail a file in real time
+siftlog --live app.log
+
+# Live with a custom flush window
+siftlog --live --flush-ms 200 app.log
 ```
 
 ---
@@ -68,9 +74,9 @@ SiftLog reads log events from one or more sources simultaneously, normalizes the
 
 **Anomaly rate detection** — flags services whose error rate exceeds a configurable multiple of their recent baseline.
 
-**Cascade detection** *(coming soon)* — when service A errors and service B begins erroring within the correlation window, and the events share a trace ID, SiftLog marks it as a cascade and orders the output to show the originating service first.
+**Cascade detection** — when service A errors and service B begins erroring within the correlation window, SiftLog marks it as a cascade and orders the output to show the originating service first. Uses trace ID correlation as the primary signal; falls back to temporal correlation when trace IDs are absent.
 
-**Silence detection** *(coming soon)* — a service that stops producing logs is often more significant than one producing errors. Flags services that drop below their expected volume.
+**Silence detection** — a service that stops producing logs is often more significant than one producing errors. Flags services that drop below their expected volume based on a rolling baseline.
 
 ---
 
@@ -99,7 +105,7 @@ sources:
 
 correlation:
   anchor: sender      # sender | receiver
-  window_ms: 500
+  window_ms: 5000
   drift_tolerance_ms: 200
 
 signal:
@@ -135,9 +141,11 @@ Flags:
   --output string    Output format: human | json | compact (default: human)
   --since string     Start time: 15m, 1h, 2024-01-01T00:00:00Z
   --until string     End time
-  --services string  Comma-separated services to include (default: all)
+  --window string    Correlation window duration (default: 5000ms)
   --quiet            Signal only — suppress noise
   --verbose          Include all events and structured fields
+  --live             Tail sources and stream events in real time
+  --flush-ms int     Live mode: max ms before oldest buffered event is emitted (default 500)
 ```
 
 ---
@@ -147,11 +155,11 @@ Flags:
 | Source                     | Status      |
 | -------------------------- | ----------- |
 | File / stdin               | Available   |
-| Grafana Loki               | Planned     |
-| AWS CloudWatch Logs        | Planned     |
-| Elasticsearch / OpenSearch | Planned     |
-| Datadog Logs               | Future      |
-| Google Cloud Logging       | Future      |
+| Grafana Loki               | Available   |
+| AWS CloudWatch Logs        | Available   |
+| Elasticsearch / OpenSearch | Available   |
+| Datadog Logs               | Planned     |
+| Google Cloud Logging       | Planned     |
 
 Log formats handled automatically: JSON (structured), plain text with heuristic timestamp and severity extraction. Handles RFC3339, space-separated datetime, Unix epoch (seconds and milliseconds), and common framework variants.
 
