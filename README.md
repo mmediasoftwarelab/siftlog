@@ -7,7 +7,7 @@
 When a cascading failure hits your system, the signal is spread across multiple log streams — each with its own timestamp format, clock drift, and noise floor. Existing observability tools show you *that* something is wrong. SiftLog shows you *what* happened and in what order, in your terminal, in seconds.
 
 ```
-SIFTLOG v0.2.0  |  sources: 2  |  window: 5000ms  |  anchor: sender
+SIFTLOG v0.3.0  |  sources: 2  |  window: 5000ms  |  anchor: sender
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 [signal:cascade] payment-service → order-service → notification-service
 
